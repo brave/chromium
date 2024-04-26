@@ -2872,3 +2872,14 @@ std::optional<int> TabStripModel::DetermineNewSelectedIndex(
 
   return removing_index;
 }
+
+bool TabStripModel::IsAnySelectedTabPinned() {
+    const ui::ListSelectionModel::SelectedIndices& sel =
+    selection_model_.selected_indices();
+    
+    for ( ui::ListSelectionModel::SelectedIndices::const_iterator it = begin(sel) ;
+          it != end(sel) ; it++ ) {
+        if(IsTabPinned(*it))  return true;
+    }
+    return false;
+}

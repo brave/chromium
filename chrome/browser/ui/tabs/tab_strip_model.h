@@ -612,6 +612,11 @@ class TabStripModel : public TabGroupController {
   // Serialise this object into a trace.
   void WriteIntoTrace(perfetto::TracedValue context) const;
 
+  // Checks if any of the selected tab is pinned.
+  // Used to check if the tab getting closed using ctrl+w shortcut is pinned or not
+  bool IsAnySelectedTabPinned();
+
+  TAB_STRIP_MODEL_H_
  private:
   FRIEND_TEST_ALL_PREFIXES(TabStripModelTest, GetIndicesClosedByCommand);
 
