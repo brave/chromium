@@ -471,8 +471,11 @@ bool BrowserCommandController::ExecuteCommandWithDisposition(
       break;
     }
     case IDC_CLOSE_TAB:
-      base::RecordAction(base::UserMetricsAction("CloseTabByKey"));
-      CloseTab(browser_);
+      // If, ctrl+w is pressed for pinned tabs, ignore
+      if( !browser_->tab_strip_model()->IsAnySelectedTabPinned() ) {
+        base::RecordAction(base::UserMetricsAction("CloseTabByKey"));
+        CloseTab(browser_);
+      }
       break;
     case IDC_SELECT_NEXT_TAB:
       base::RecordAction(base::UserMetricsAction("Accel_SelectNextTab"));

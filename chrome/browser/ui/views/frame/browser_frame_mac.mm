@@ -347,11 +347,6 @@ bool BrowserFrameMac::ExecuteCommand(
     return false;
 
   Browser* browser = browser_view_->browser();
-
-  // In case, close tab command is raised from keyboard for pinned tabs, ignore.
-  if( command  == IDC_CLOSE_TAB && 
-      browser->tab_strip_model()->IsAnySelectedTabPinned()) 
-      return true;
     
   chrome::ExecuteCommandWithDisposition(browser, command,
                                         window_open_disposition);
