@@ -8,6 +8,7 @@ chromium/try/android-12l-x64-rel-cq
 chromium/try/android-13-x64-rel
 chromium/try/android-14-arm64-rel
 chromium/try/android-14-tablet-landscape-arm64-rel
+chromium/try/android-15-tablet-landscape-x64-rel
 chromium/try/android-15-x64-rel
 chromium/try/android-arm-compile-dbg
 chromium/try/android-arm64-rel
@@ -120,6 +121,7 @@ chromium/try/linux-tsan-rel
 chromium/try/linux-ubsan-rel
 chromium/try/linux-ubsan-vptr-rel
 chromium/try/linux-v4l2-codec-rel
+chromium/try/linux-wayland-mutter-rel
 chromium/try/linux-wayland-rel
 chromium/try/linux-win-cross-rel
 chromium/try/linux_chromium_archive_rel_ng
@@ -140,6 +142,7 @@ chromium/try/mac-asan-rel
 chromium/try/mac-clobber-rel
 chromium/try/mac-libfuzzer-asan-rel
 chromium/try/mac-official
+chromium/try/mac-rel
 chromium/try/mac11-arm64-rel
 chromium/try/mac12-arm64-rel
 chromium/try/mac12-tests

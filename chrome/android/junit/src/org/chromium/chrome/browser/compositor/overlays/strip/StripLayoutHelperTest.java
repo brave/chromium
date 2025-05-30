@@ -93,13 +93,14 @@ import org.chromium.chrome.browser.compositor.layouts.LayoutRenderHost;
 import org.chromium.chrome.browser.compositor.layouts.LayoutUpdateHost;
 import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton;
 import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton.ButtonType;
+import org.chromium.chrome.browser.compositor.layouts.components.CompositorButton.TooltipHandler;
 import org.chromium.chrome.browser.compositor.layouts.components.TintedCompositorButton;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutView.StripLayoutViewOnClickHandler;
 import org.chromium.chrome.browser.compositor.overlays.strip.StripLayoutView.StripLayoutViewOnKeyboardFocusHandler;
 import org.chromium.chrome.browser.compositor.overlays.strip.TabStripIphController.IphType;
 import org.chromium.chrome.browser.compositor.overlays.strip.reorder.ReorderDelegate;
 import org.chromium.chrome.browser.compositor.overlays.strip.reorder.ReorderDelegate.ReorderType;
-import org.chromium.chrome.browser.compositor.overlays.strip.reorder.TabDragSource;
+import org.chromium.chrome.browser.compositor.overlays.strip.reorder.TabStripDragHandler;
 import org.chromium.chrome.browser.data_sharing.DataSharingServiceFactory;
 import org.chromium.chrome.browser.data_sharing.DataSharingTabManager;
 import org.chromium.chrome.browser.dragdrop.ChromeDropDataAndroid;
@@ -127,6 +128,7 @@ import org.chromium.chrome.browser.tabmodel.TabModelActionListener;
 import org.chromium.chrome.browser.tabmodel.TabModelActionListener.DialogType;
 import org.chromium.chrome.browser.tabmodel.TabRemover;
 import org.chromium.chrome.browser.tabmodel.TabUngrouper;
+import org.chromium.chrome.browser.tasks.tab_management.TabDragHandlerBase;
 import org.chromium.chrome.browser.tasks.tab_management.TabGroupListBottomSheetCoordinatorFactory;
 import org.chromium.chrome.test.util.browser.tabmodel.MockTabModel;
 import org.chromium.components.browser_ui.bottomsheet.BottomSheetController;
@@ -185,8 +187,9 @@ public class StripLayoutHelperTest {
     @Mock private StripTabHoverCardView mTabHoverCardView;
     @Mock private Profile mProfile;
     @Mock private StripLayoutViewOnClickHandler mClickHandler;
+    @Mock private TooltipHandler mTooltipHandler;
     @Mock private StripLayoutViewOnKeyboardFocusHandler mKeyboardFocusHandler;
-    @Mock private TabDragSource mTabDragSource;
+    @Mock private TabStripDragHandler mTabStripDragHandler;
     @Mock private WindowAndroid mWindowAndroid;
     @Mock private LayerTitleCache mLayerTitleCache;
     @Mock private ActionConfirmationManager mActionConfirmationManager;
@@ -222,6 +225,7 @@ public class StripLayoutHelperTest {
     private final TestTabModel mModel = spy(new TestTabModel());
     private StripLayoutHelper mStripLayoutHelper;
     private boolean mIncognito;
+    private static final int NEW_ANIM_TAB_RESIZE_MS = 200;
     private static final String[] TEST_TAB_TITLES = {"Tab 1", "Tab 2", "Tab 3", "", null};
     private static final String EXPECTED_NO_MARGIN = "The tab should not have a trailing margin.";
     private static final String EXPECTED_TAB = "The view should be a tab.";
@@ -293,7 +297,7 @@ public class StripLayoutHelperTest {
             mStripLayoutHelper.setRunningAnimatorForTesting(null);
             mStripLayoutHelper.destroyTabContextMenuForTesting();
         }
-        mTabDragSource = null;
+        mTabStripDragHandler = null;
     }
 
     /**
@@ -1442,6 +1446,7 @@ public class StripLayoutHelperTest {
                         tab,
                         24.f,
                         24.f,
+                        mTooltipHandler,
                         mClickHandler,
                         mKeyboardFocusHandler,
                         R.drawable.btn_tab_close_normal,
@@ -1479,6 +1484,7 @@ public class StripLayoutHelperTest {
                         tabs[0],
                         24.f,
                         24.f,
+                        mTooltipHandler,
                         mClickHandler,
                         mKeyboardFocusHandler,
                         R.drawable.btn_tab_close_normal,
@@ -1981,7 +1987,7 @@ public class StripLayoutHelperTest {
         assertTrue(
                 "Should start reorder mode when dragging on pressed on tab with mouse.",
                 mStripLayoutHelper.getInReorderModeForTesting());
-        verify(mTabDragSource)
+        verify(mTabStripDragHandler)
                 .startTabDragAction(
                         mToolbarContainerView,
                         mModel.getTabAt(1),
@@ -2266,7 +2272,7 @@ public class StripLayoutHelperTest {
     @Config(sdk = Build.VERSION_CODES.R)
     public void testOnLongPress_WithDragDrop_OnTab_ContextMenuEnabled() {
         var tabs = initializeTest_ForTab();
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         setupForIndividualTabContextMenu();
         mStripLayoutHelper.onTabStateInitialized(); // drag is disabled if tab state is not init'ed
         onLongPress_OnTab(tabs);
@@ -2395,10 +2401,11 @@ public class StripLayoutHelperTest {
     @Config(sdk = Build.VERSION_CODES.R)
     public void testOnLongPress_WithDragDrop_OnTab() {
         var tabs = initializeTest_ForTab();
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         onLongPress_OnTab(tabs);
         // Verify drag invoked
-        verify(mTabDragSource).startTabDragAction(any(), any(), any(), anyFloat(), anyFloat());
+        verify(mTabStripDragHandler)
+                .startTabDragAction(any(), any(), any(), anyFloat(), anyFloat());
     }
 
     private StripLayoutTab[] initializeTest_ForTab() {
@@ -2457,13 +2464,13 @@ public class StripLayoutHelperTest {
     @Config(sdk = Build.VERSION_CODES.R)
     public void testOnLongPress_WithDragDrop_OffTab() {
         // Extra setup for DragDrop
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         Activity activity = spy(mActivity);
         when(mToolbarContainerView.getContext()).thenReturn(activity);
 
         onLongPress_OffTab();
         // verify tab drag not invoked.
-        verifyNoInteractions(mTabDragSource);
+        verifyNoInteractions(mTabStripDragHandler);
     }
 
     private void onLongPress_OffTab() {
@@ -3419,7 +3426,7 @@ public class StripLayoutHelperTest {
     public void testTabGroupDeleteDialog_DragOffStrip_NotLastTab() {
         // Set up resources for testing tab group delete dialog.
         setupTabGroup(0, 2);
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         setupDragDropState();
         StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
         mStripLayoutHelper.startDragAndDropTabForTesting(tabs[0], DRAG_START_POINT);
@@ -3441,7 +3448,7 @@ public class StripLayoutHelperTest {
 
         // Set up resources for testing tab group delete dialog.
         setupTabGroup(0, 1);
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         setupDragDropState();
         StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
         mStripLayoutHelper.startDragAndDropTabForTesting(tabs[0], DRAG_START_POINT);
@@ -3464,7 +3471,7 @@ public class StripLayoutHelperTest {
 
         // Set up resources for testing tab group delete dialog.
         setupTabGroup(0, 1);
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         setupDragDropState();
         StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
         mStripLayoutHelper.startDragAndDropTabForTesting(tabs[0], DRAG_START_POINT);
@@ -3509,7 +3516,7 @@ public class StripLayoutHelperTest {
     public void testTabGroupDeleteDialog_DragOffStrip_Sync_Positive() {
         // Set up resources for testing tab group delete dialog.
         setupTabGroup(0, 1);
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         setupDragDropState();
         StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
         mStripLayoutHelper.startDragAndDropTabForTesting(tabs[0], DRAG_START_POINT);
@@ -3548,7 +3555,7 @@ public class StripLayoutHelperTest {
     public void testTabGroupDeleteDialog_DragOffStrip_Sync_Negative() {
         // Set up resources for testing tab group delete dialog.
         setupTabGroup(0, 1);
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         setupDragDropState();
         StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
         mStripLayoutHelper.startDragAndDropTabForTesting(tabs[0], DRAG_START_POINT);
@@ -4711,7 +4718,7 @@ public class StripLayoutHelperTest {
         // Attempt to start a drag and drop and verify that we don't start it.
         StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
         mStripLayoutHelper.startDragAndDropTabForTesting(tabs[2], DRAG_START_POINT);
-        verify(mTabDragSource, never())
+        verify(mTabStripDragHandler, never())
                 .startTabDragAction(any(), any(), any(), anyFloat(), anyFloat());
     }
 
@@ -4867,7 +4874,7 @@ public class StripLayoutHelperTest {
                 mRenderHost,
                 incognito,
                 mModelSelectorBtn,
-                mTabDragSource,
+                mTabStripDragHandler,
                 mToolbarContainerView,
                 mWindowAndroid,
                 mActionConfirmationManager,
@@ -4948,8 +4955,8 @@ public class StripLayoutHelperTest {
         }
     }
 
-    private void setTabDragSourceMock() {
-        when(mTabDragSource.startTabDragAction(any(), any(), any(), anyFloat(), anyFloat()))
+    private void setTabStripDragHandlerMock() {
+        when(mTabStripDragHandler.startTabDragAction(any(), any(), any(), anyFloat(), anyFloat()))
                 .thenReturn(true);
         MultiWindowTestUtils.enableMultiInstance();
     }
@@ -4958,7 +4965,7 @@ public class StripLayoutHelperTest {
     @Config(sdk = Build.VERSION_CODES.R)
     public void testDrag_AllowMovingTabOutOfStripLayout_SetActiveTab() {
         // Setup with 10 tabs and select tab 5.
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         initializeTest(false, false, 5, 10);
         StripLayoutTab[] tabs = getMockedStripLayoutTabs(TAB_WIDTH_1, 150f, 10);
         mStripLayoutHelper.setStripLayoutTabsForTesting(tabs);
@@ -4976,7 +4983,7 @@ public class StripLayoutHelperTest {
         // Act and verify.
         mStripLayoutHelper.startDragAndDropTabForTesting(theClickedTab, DRAG_START_POINT);
 
-        verify(mTabDragSource, times(1))
+        verify(mTabStripDragHandler, times(1))
                 .startTabDragAction(any(), any(), any(), anyFloat(), anyFloat());
         assertTrue(
                 "Drag action should initiate reorder.",
@@ -4995,7 +5002,7 @@ public class StripLayoutHelperTest {
     @Config(sdk = Build.VERSION_CODES.R)
     public void testDrag_clearState() {
         initializeTest(3);
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         mStripLayoutHelper.startDragAndDropTabForTesting(
                 mStripLayoutHelper.getStripLayoutTabsForTesting()[0], DRAG_START_POINT);
 
@@ -5010,7 +5017,7 @@ public class StripLayoutHelperTest {
     public void testDrag_sendMoveWindowBroadcast_success() {
         XrUtils.setXrDeviceForTesting(true);
         // Setup with tabs and select first tab.
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         when(mToolbarContainerView.getContext()).thenReturn(mActivity);
         initializeTest(false, false, 0, 5);
 
@@ -5047,7 +5054,7 @@ public class StripLayoutHelperTest {
     public void testDrag_DragOutOfSourceStrip() {
         // Setup and start drag.
         initializeTest(false, false, 1, 5);
-        setTabDragSourceMock();
+        setTabStripDragHandlerMock();
         setupDragDropState();
         StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
         StripLayoutTab draggedTab = tabs[1];
@@ -6239,6 +6246,59 @@ public class StripLayoutHelperTest {
                 /* expectedScrollDelta= */ StripLayoutHelper.SCROLL_SPEED_FACTOR);
     }
 
+    @Test
+    @EnableFeatures({ChromeFeatureList.TABLET_TAB_STRIP_ANIMATION})
+    public void testTabCreated_HorizontalAnimation() {
+        // Initialize with default amount of tabs. Clear any animations.
+        initializeTest(false, false, 3);
+        mStripLayoutHelper.finishAnimationsAndPushTabUpdates();
+        assertNull(
+                "Animation should not be running.",
+                mStripLayoutHelper.getRunningAnimatorForTesting());
+
+        // Act: Create new tab in model and trigger update in tab strip.
+        mModel.addTab("new tab");
+        mStripLayoutHelper.tabCreated(TIMESTAMP, 5, 3, true, false, false);
+    }
+
+    @Test
+    @EnableFeatures({ChromeFeatureList.TABLET_TAB_STRIP_ANIMATION})
+    public void testTabClosing_NoTabResize_HorizontalAnimation() {
+        // Arrange
+        int tabCount = 10;
+        initializeTest(false, false, 9, tabCount);
+        StripLayoutTab[] tabs = mStripLayoutHelper.getStripLayoutTabsForTesting();
+        mStripLayoutHelper.onSizeChanged(
+                SCREEN_WIDTH, SCREEN_HEIGHT, false, TIMESTAMP, PADDING_LEFT, PADDING_RIGHT, 0f);
+        setupForAnimations();
+
+        mStripLayoutHelper.updateLayout(TIMESTAMP);
+
+        // Act: Call on close tab button handler.
+        mStripLayoutHelper.handleCloseButtonClick(
+                tabs[9], MotionEventUtils.MOTION_EVENT_BUTTON_NONE);
+
+        // Assert: One set of animations started.
+        assertFalse(
+                "MultiStepAnimations should not have started.",
+                mStripLayoutHelper.isMultiStepCloseAnimationsRunningForTesting());
+
+        // Act: End the tab closing animations to apply final values.
+        Animator runningAnimator = mStripLayoutHelper.getRunningAnimatorForTesting();
+        assertNotNull(runningAnimator);
+        runningAnimator.end();
+
+        // Assert: Tab is closed.
+        int expectedTabCount = 9;
+        assertEquals(
+                "Unexpected tabs count",
+                expectedTabCount,
+                mStripLayoutHelper.getStripLayoutTabsForTesting().length);
+
+        // Assert: There should only be one set of animations.
+        assertFalse(mStripLayoutHelper.getRunningAnimatorForTesting().isRunning());
+    }
+
     /**
      * Tests {@link StripLayoutHelper#onScroll(float, float)}
      *
@@ -6291,7 +6351,7 @@ public class StripLayoutHelperTest {
         TrackerToken dragTrackerToken =
                 DragDropGlobalState.store(
                         /* dragSourceInstanceId= */ 1, dropData, /* dragShadowBuilder= */ null);
-        TabDragSource.setDragTrackerTokenForTesting(dragTrackerToken);
+        TabDragHandlerBase.setDragTrackerTokenForTesting(dragTrackerToken);
     }
 
     private final class TestTabRemover implements TabRemover {

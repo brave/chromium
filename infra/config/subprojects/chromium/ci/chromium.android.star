@@ -3722,6 +3722,15 @@ ci.builder(
                     shards = 12,
                 ),
             ),
+            "android_chrome_wpt_tests": targets.remove(
+                reason = "Only run this step on Android 15 for now.",
+            ),
+            "android_webdriver_wpt_tests": targets.remove(
+                reason = "Only run this step on Android 15 for now.",
+            ),
+            "android_webview_wpt_tests": targets.remove(
+                reason = "Only run this step on Android 15 for now.",
+            ),
             "android_sync_integration_tests": targets.mixin(
                 swarming = targets.swarming(
                     shards = 2,
@@ -4483,7 +4492,6 @@ ci.builder(
             "chrome_public_test_apk": targets.mixin(
                 args = [
                     "--test-launcher-filter-file=../../testing/buildbot/filters/android.emulator_15_tablet_landscape.chrome_public_test_apk.filter",
-                    "--emulator-debug-tags=all",
                 ],
             ),
         },
@@ -4491,9 +4499,7 @@ ci.builder(
     targets_settings = targets.settings(
         os_type = targets.os_type.ANDROID,
     ),
-    # TODO(crbug.com/376748979 ): Enable gardening once tests are stable
-    gardener_rotations = args.ignore_default(None),
-    # tree_closing = True,
+    tree_closing = True,
     console_view_entry = consoles.console_view_entry(
         category = "builder_tester|x64",
         short_name = "15T-L",
@@ -4556,6 +4562,7 @@ ci.builder(
                 args = [
                     # https://crbug.com/375086487
                     "--gtest_filter=-InstallableManagerBrowserTest.CheckManifestWithIconThatIsTooSmall",
+                    "--emulator-debug-tags=all",
                 ],
                 swarming = targets.swarming(
                     shards = 6,

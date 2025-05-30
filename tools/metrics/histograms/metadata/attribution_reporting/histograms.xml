@@ -407,7 +407,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Conversions.ClearDataTime" units="ms"
-    expires_after="2025-09-23">
+    expires_after="2025-11-23">
   <owner>csharrison@chromium.org</owner>
   <owner>measurement-api-dev+metrics@google.com</owner>
   <summary>
@@ -542,7 +542,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Conversions.DebugReport.ReportRetrySucceedAggregatable"
-    enum="BooleanSuccess" expires_after="2025-09-23">
+    enum="BooleanSuccess" expires_after="2025-11-23">
   <owner>linnan@chromium.org</owner>
   <owner>measurement-api-dev+metrics@google.com</owner>
   <summary>
@@ -810,7 +810,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Conversions.NamedBudgetsPer{Type}Registration"
-    units="named_budgets" expires_after="2025-09-23">
+    units="named_budgets" expires_after="2025-11-23">
   <owner>tquintanilla@chromium.org</owner>
   <owner>measurement-api-dev+metrics@google.com</owner>
   <summary>
@@ -824,7 +824,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Conversions.NavigationDataHostStatus3"
-    enum="ConversionNavigationDataHostStatus" expires_after="2025-08-24">
+    enum="ConversionNavigationDataHostStatus" expires_after="2025-11-23">
   <owner>linnan@chromium.org</owner>
   <owner>measurement-api-dev+metrics@google.com</owner>
   <summary>
@@ -1249,7 +1249,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Conversions.Storage.ClearDataWithFilterDuration" units="ms"
-    expires_after="2025-09-23">
+    expires_after="2025-11-23">
   <owner>csharrison@chromium.org</owner>
   <owner>measurement-api-dev+metrics@google.com</owner>
   <summary>
@@ -1421,6 +1421,29 @@ chromium-metrics-reviews@google.com.
   </summary>
 </histogram>
 
+<histogram name="Conversions.TriggerDataMatchingModulusSameInputOutput"
+    units="bool" expires_after="2025-08-24">
+  <owner>tquintanilla@chromium.org</owner>
+  <owner>apaseltiner@chromium.org</owner>
+  <owner>measurement-api-dev+metrics@google.com</owner>
+  <summary>
+    When a chosen source for attribution contains the trigger data matching mode
+    `modulus`, measures whether the passed trigger data equals the source's
+    chosen trigger data. Recorded when creating an event-level report.
+  </summary>
+</histogram>
+
+<histogram name="Conversions.TriggerDataMatchingRegistration"
+    enum="ConversionTriggerDataMatching" expires_after="2025-08-24">
+  <owner>tquintanilla@chromium.org</owner>
+  <owner>apaseltiner@chromium.org</owner>
+  <owner>measurement-api-dev+metrics@google.com</owner>
+  <summary>
+    Records the trigger data matching mode when registering a source (modulus is
+    the default mode). Recorded on successful source registration.
+  </summary>
+</histogram>
+
 <histogram name="Conversions.TriggerRegistrationError11"
     enum="ConversionTriggerRegistrationError" expires_after="2025-08-24">
   <owner>tquintanilla@chromium.org</owner>
@@ -1492,7 +1515,7 @@ chromium-metrics-reviews@google.com.
 </histogram>
 
 <histogram name="Conversions.ValuesPerFilter" units="values"
-    expires_after="2025-09-23">
+    expires_after="2025-11-23">
   <owner>linnan@chromium.org</owner>
   <owner>measurement-api-dev+metrics@google.com</owner>
   <summary>
